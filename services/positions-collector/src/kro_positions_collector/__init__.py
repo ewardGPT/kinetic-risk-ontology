@@ -63,7 +63,7 @@ def _to_decimal(v: Any) -> Decimal | None:
 
 
 def _ts_to_dt(v: Any) -> datetime:
-    if isinstance(v, (int, float)):
+    if isinstance(v, int | float):
         if v > 1e12:
             return datetime.fromtimestamp(v / 1000, tz=UTC)
         return datetime.fromtimestamp(v, tz=UTC)

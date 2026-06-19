@@ -103,7 +103,7 @@ def normalize_gamma_market(m: dict, basket: str) -> dict | None:
                 res_date = datetime.fromisoformat(res_date.replace("Z", "+00:00"))
             except Exception:
                 res_date = None
-        elif isinstance(res_date, (int, float)):
+        elif isinstance(res_date, int | float):
             res_date = datetime.fromtimestamp(res_date, tz=UTC)
 
         def _dec(v) -> Decimal | None:
@@ -163,7 +163,7 @@ async def sync_gamma_once(client: httpx.AsyncClient, base_url: str, basket: str)
 
 
 def _ts_to_dt(ts_raw) -> datetime:
-    if isinstance(ts_raw, (int, float)):
+    if isinstance(ts_raw, int | float):
         if ts_raw > 1e12:
             return datetime.fromtimestamp(ts_raw / 1000, tz=UTC)
         return datetime.fromtimestamp(ts_raw, tz=UTC)
@@ -286,7 +286,7 @@ def parse_ws_trade(msg: dict, condition_id_to_market: dict[str, dict]) -> dict |
             return None
         market_id = condition_id_to_market.get(condition_id, {}).get("market_id", condition_id)
         ts_raw = msg.get("timestamp") or msg.get("time")
-        if isinstance(ts_raw, (int, float)):
+        if isinstance(ts_raw, int | float):
             ts = datetime.fromtimestamp(ts_raw, tz=UTC)
         elif isinstance(ts_raw, str):
             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
