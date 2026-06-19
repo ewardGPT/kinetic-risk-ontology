@@ -1,0 +1,12 @@
+{
+  "basket_name": "geopolitical",
+  "description": "Curated basket of ~20 geopolitical/strategic markets for KRO Phase 0. Liquidity-gated.",
+  "selection_criteria": {
+    "min_liquidity_usdc": 1000,
+    "min_volume_24h_usdc": 500,
+    "active_only": true,
+    "closed_excluded": true,
+    "categories": ["Geopolitics", "Politics", "World", "Elections", "Conflicts", "Policy", "Economy"]
+  },
+  "markets": []
+}

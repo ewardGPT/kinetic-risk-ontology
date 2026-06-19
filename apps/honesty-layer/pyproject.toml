@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kro-honesty"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "kro-common",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kro_honesty"]

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kro-common"
+version = "0.1.0"
+description = "Shared KRO types, config, db, bus, and logging"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "python-dotenv>=1.0",
+  "asyncpg>=0.29",
+  "aiokafka>=0.10",
+  "httpx>=0.27",
+  "websockets>=12",
+  "structlog>=24.1",
+  "orjson>=3.9",
+  "tenacity>=8.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kro_common"]

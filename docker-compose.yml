@@ -1,0 +1,211 @@
+name: palentir
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    container_name: palentir-redpanda
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  timescaledb:
+    image: timescale/timescaledb:2.17.1-pg16
+    container_name: palentir-timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kro}
+      POSTGRES_DB: ${POSTGRES_DB:-kro}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./infra/timescaledb/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-kro}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: palentir-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-kro}
+      NEO4J_PLUGINS: '[]'
+      NEO4J_server_memory_heap_initial__size: 1G
+      NEO4J_server_memory_heap_max__size: 2G
+      NEO4J_server_memory_pagecache_size: 1G
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+      - ./infra/neo4j/import:/import
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: palentir-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-kro_local_2026}
+      GF_SECURITY_ADMIN_USER: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    ports:
+      - "3300:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  market-collector:
+    build:
+      context: .
+      dockerfile: services/market-collector/Dockerfile
+    container_name: palentir-market-collector
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+      REDPANDA_BROKERS: redpanda:9092
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  chain-collector:
+    build:
+      context: .
+      dockerfile: services/chain-collector/Dockerfile
+    container_name: palentir-chain-collector
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+      REDPANDA_BROKERS: redpanda:9092
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - chain-state:/var/tmp
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  positions-collector:
+    build:
+      context: .
+      dockerfile: services/positions-collector/Dockerfile
+    container_name: palentir-positions-collector
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+      REDPANDA_BROKERS: redpanda:9092
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ontology-loader:
+    build:
+      context: .
+      dockerfile: services/ontology-loader/Dockerfile
+    container_name: palentir-ontology-loader
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+      NEO4J_URI: bolt://neo4j:7687
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+
+  entity-resolution:
+    build:
+      context: .
+      dockerfile: services/entity-resolution/Dockerfile
+    container_name: palentir-entity-resolution
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  kinetic-risk:
+    build:
+      context: .
+      dockerfile: services/kinetic-risk/Dockerfile
+    container_name: palentir-kinetic-risk
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+      REDPANDA_BROKERS: redpanda:9092
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  honesty-layer:
+    build:
+      context: .
+      dockerfile: apps/honesty-layer/Dockerfile
+    container_name: palentir-honesty-layer
+    env_file: .env
+    environment:
+      POSTGRES_HOST: timescaledb
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  timescale-data:
+  neo4j-data:
+  grafana-data:
+  chain-state:

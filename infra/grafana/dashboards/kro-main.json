@@ -1,0 +1,211 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 30},
+              {"color": "red", "value": 70}
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.3.0",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+          "editorMode": "code",
+          "format": "time_series",
+          "group": [],
+          "rawQuery": true,
+          "rawSql": "SELECT time AS \"time\", prob_last AS \"Probability\" FROM market_ticks_1min WHERE $__timeFilter(bucket) AND market_id = (SELECT market_id FROM markets WHERE curated = TRUE LIMIT 1) AND outcome = 'YES' ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Market Probability (curated sample, YES outcome)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 8},
+      "id": 2,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max", "min"], "displayMode": "table", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS \"time\", prob_last AS \"Probability\", m.question AS \"metric\" FROM market_ticks_1min mt JOIN markets m ON m.market_id = mt.market_id WHERE mt.bucket > $__timeFrom() AND mt.outcome = 'YES' AND m.curated = TRUE ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Curated Market Probabilities (all YES outcomes)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 17},
+      "id": 3,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT time AS \"time\", COUNT(*) AS \"ticks/sec\" FROM market_ticks WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Market Tick Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 17},
+      "id": 4,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT time AS \"time\", COUNT(*) AS \"transfers/min\" FROM chain_transfers WHERE $__timeFilter(time) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "On-Chain Transfer Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 0.3},
+              {"color": "red", "value": 0.7}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 25},
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "TimescaleDB"},
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT time AS \"time\", composite_score AS \"Score\", market_id AS \"Market\", state AS \"State\" FROM kinetic_alerts WHERE $__timeFilter(time) ORDER BY 2 DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Kinetic Risk Alerts (live)",
+      "type": "table"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["kro", "kinetic-risk"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "KRO - Kinetic Risk Ontology",
+  "uid": "kro-main",
+  "version": 1,
+  "weekStart": ""
+}
