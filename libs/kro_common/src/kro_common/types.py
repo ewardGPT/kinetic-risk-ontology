@@ -1,4 +1,5 @@
 """KRO common types — the ontology as Pydantic models."""
+
 from __future__ import annotations
 
 from datetime import datetime

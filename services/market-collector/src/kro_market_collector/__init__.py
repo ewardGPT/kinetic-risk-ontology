@@ -1,27 +1,30 @@
 """Market collector — Gamma metadata + CLOB WS ticks for curated geopol markets."""
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import signal
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 import httpx
 import structlog
 import websockets
 from kro_common import (
+    TOPICS,
     BusProducer,
     PgPool,
-    TOPICS,
     get_settings,
+    insert_market_ticks,
     setup_logging,
     upsert_markets,
-    insert_market_ticks,
 )
 
-from .curation import select_curated_markets, build_basket
+from .curation import build_basket, select_curated_markets
 
 log = structlog.get_logger("market-collector")
 
@@ -33,9 +36,7 @@ WS_PING_TIMEOUT = 20
 RECONNECT_DELAY = 5
 
 
-async def fetch_gamma_markets(
-    client: httpx.AsyncClient, base_url: str
-) -> list[dict]:
+async def fetch_gamma_markets(client: httpx.AsyncClient, base_url: str) -> list[dict]:
     """Pull all active, non-closed markets from Gamma API with pagination."""
     markets: list[dict] = []
     offset = 0
@@ -103,7 +104,7 @@ def normalize_gamma_market(m: dict, basket: str) -> dict | None:
             except Exception:
                 res_date = None
         elif isinstance(res_date, (int, float)):
-            res_date = datetime.fromtimestamp(res_date, tz=timezone.utc)
+            res_date = datetime.fromtimestamp(res_date, tz=UTC)
 
         def _dec(v) -> Decimal | None:
             if v is None or v == "":
@@ -149,9 +150,7 @@ def normalize_gamma_market(m: dict, basket: str) -> dict | None:
         return None
 
 
-async def sync_gamma_once(
-    client: httpx.AsyncClient, base_url: str, basket: str
-) -> list[dict]:
+async def sync_gamma_once(client: httpx.AsyncClient, base_url: str, basket: str) -> list[dict]:
     """Fetch all Gamma markets, normalize, upsert. Returns the normalized list."""
     raw = await fetch_gamma_markets(client, base_url)
     normalized = []
@@ -166,27 +165,25 @@ async def sync_gamma_once(
 def _ts_to_dt(ts_raw) -> datetime:
     if isinstance(ts_raw, (int, float)):
         if ts_raw > 1e12:
-            return datetime.fromtimestamp(ts_raw / 1000, tz=timezone.utc)
-        return datetime.fromtimestamp(ts_raw, tz=timezone.utc)
+            return datetime.fromtimestamp(ts_raw / 1000, tz=UTC)
+        return datetime.fromtimestamp(ts_raw, tz=UTC)
     if isinstance(ts_raw, str):
         try:
             if ts_raw.isdigit():
                 v = int(ts_raw)
                 if v > 1e12:
-                    return datetime.fromtimestamp(v / 1000, tz=timezone.utc)
-                return datetime.fromtimestamp(v, tz=timezone.utc)
+                    return datetime.fromtimestamp(v / 1000, tz=UTC)
+                return datetime.fromtimestamp(v, tz=UTC)
         except Exception:
             pass
         try:
             return datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
         except Exception:
             pass
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
-def _parse_price_change_entry(
-    p: dict, condition_id_to_market: dict[str, dict]
-) -> dict | None:
+def _parse_price_change_entry(p: dict, condition_id_to_market: dict[str, dict]) -> dict | None:
     try:
         asset_id = p.get("asset_id")
         if not asset_id:
@@ -225,9 +222,7 @@ def _parse_price_change_entry(
         return None
 
 
-def parse_clob_ws_message(
-    payload, condition_id_to_market: dict[str, dict]
-) -> list[dict]:
+def parse_clob_ws_message(payload, condition_id_to_market: dict[str, dict]) -> list[dict]:
     """Parse a Polymarket CLOB WS payload (dict, list, or other) into MarketTick dicts."""
     out: list[dict] = []
     if isinstance(payload, list):
@@ -289,21 +284,21 @@ def parse_ws_trade(msg: dict, condition_id_to_market: dict[str, dict]) -> dict |
         condition_id = msg.get("condition_id") or msg.get("market")
         if not asset_id or not condition_id:
             return None
-        market_id = condition_id_to_market.get(condition_id, {}).get(
-            "market_id", condition_id
-        )
+        market_id = condition_id_to_market.get(condition_id, {}).get("market_id", condition_id)
         ts_raw = msg.get("timestamp") or msg.get("time")
         if isinstance(ts_raw, (int, float)):
-            ts = datetime.fromtimestamp(ts_raw, tz=timezone.utc)
+            ts = datetime.fromtimestamp(ts_raw, tz=UTC)
         elif isinstance(ts_raw, str):
             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
         else:
-            ts = datetime.now(tz=timezone.utc)
+            ts = datetime.now(tz=UTC)
         price = Decimal(str(msg.get("price", 0)))
         size = Decimal(str(msg.get("size", 0)))
         return {
             "time": ts,
-            "trade_id": msg.get("id") or msg.get("trade_id") or f"{msg.get('tx_hash','?')}:{asset_id}",
+            "trade_id": msg.get("id")
+            or msg.get("trade_id")
+            or f"{msg.get('tx_hash', '?')}:{asset_id}",
             "market_id": str(market_id),
             "condition_id": str(condition_id),
             "asset_id": str(asset_id),
@@ -377,7 +372,7 @@ async def run_ws_once(
                 return
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=min(remaining, 30))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except websockets.ConnectionClosed as e:
                 log.warning("ws_closed", code=e.code, received=received, msgs=n_msgs)
@@ -395,14 +390,17 @@ async def run_ws_once(
                     await bus.send(TOPICS["market_ticks"], t, key=t["market_id"])
                 received += len(ticks)
                 if received < 5 or received % 100 < len(ticks):
-                    log.info("ws_progress", received=received, n_msgs=n_msgs, latest=ticks[-1].get("price"))
+                    log.info(
+                        "ws_progress",
+                        received=received,
+                        n_msgs=n_msgs,
+                        latest=ticks[-1].get("price"),
+                    )
             elif n_msgs <= 3 or n_msgs % 100 == 0:
                 log.info("ws_no_ticks", n_msgs=n_msgs, payload_type=type(payload).__name__)
 
 
-async def curation_loop(
-    pool: PgPool, basket_name: str, refresh_seconds: int = 600
-) -> None:
+async def curation_loop(pool: PgPool, basket_name: str, refresh_seconds: int = 600) -> None:
     """Periodically rebuild the curated basket from the live markets table."""
     while True:
         try:
@@ -457,18 +455,21 @@ async def main() -> None:
     log.info("starting_market_collector", gamma=settings.polymarket_gamma_url)
 
     async with httpx.AsyncClient() as client:
-        initial = await sync_gamma_once(client, settings.polymarket_gamma_url, settings.market_basket)
+        initial = await sync_gamma_once(
+            client, settings.polymarket_gamma_url, settings.market_basket
+        )
         if initial:
             async with pool.acquire() as conn:
                 await upsert_markets(conn, initial)
 
     stop = asyncio.Event()
-    def _sig(*_): stop.set()
+
+    def _sig(*_):
+        stop.set()
+
     for s in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             asyncio.get_running_loop().add_signal_handler(s, _sig)
-        except NotImplementedError:
-            pass
 
     state_lock = asyncio.Lock()
     state: dict[str, Any] = {"asset_ids": [], "cond_map": {}}
@@ -497,23 +498,25 @@ async def main() -> None:
                             tokens = json.loads(tokens)
                         except Exception:
                             tokens = []
-                    for t in (tokens or []):
+                    for t in tokens or []:
                         if isinstance(t, dict) and t.get("asset_id"):
                             ids.append(t["asset_id"])
                 new_asset_ids = list(dict.fromkeys(ids))
                 async with state_lock:
                     state["asset_ids"] = new_asset_ids
                     state["cond_map"] = new_cond_map
-                log.info("ws_target_refreshed", n_markets=len(new_cond_map), n_assets=len(new_asset_ids))
+                log.info(
+                    "ws_target_refreshed", n_markets=len(new_cond_map), n_assets=len(new_asset_ids)
+                )
             except Exception as e:
                 log.error("ws_target_refresh_error", err=str(e))
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=120)
-            except asyncio.TimeoutError:
-                pass
 
     tasks = [
-        asyncio.create_task(gamma_sync_loop(pool, settings.polymarket_gamma_url, settings.market_basket)),
+        asyncio.create_task(
+            gamma_sync_loop(pool, settings.polymarket_gamma_url, settings.market_basket)
+        ),
         asyncio.create_task(curation_loop(pool, settings.market_basket)),
         asyncio.create_task(refresh_curated_for_ws()),
         asyncio.create_task(run_ws_loop(pool, bus, get_state)),

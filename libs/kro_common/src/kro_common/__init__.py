@@ -1,6 +1,6 @@
 """KRO common library — types, config, db, bus, logging."""
 
-from .bus import BusConsumer, BusProducer, TOPICS
+from .bus import TOPICS, BusConsumer, BusProducer
 from .config import Settings, get_settings
 from .db import (
     PgPool,
@@ -24,6 +24,7 @@ from .types import (
 )
 
 __all__ = [
+    "TOPICS",
     "BusConsumer",
     "BusProducer",
     "ChainTransfer",
@@ -35,7 +36,6 @@ __all__ = [
     "MarketTick",
     "PgPool",
     "Settings",
-    "TOPICS",
     "Wallet",
     "get_logger",
     "get_settings",

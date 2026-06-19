@@ -1,4 +1,5 @@
 """Curated market selection — keep the signal basket small, liquid, and on-topic."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -9,15 +10,54 @@ import structlog
 log = structlog.get_logger("curation")
 
 GEO_KEYWORDS = (
-    "russia", "ukraine", "china", "taiwan", "iran", "israel", "gaza", "hamas",
-    "hezbollah", "putin", "zelensky", "xi jinping", "netanyahu", "biden", "trump",
-    "election", "president", "congress", "senate", "nato", "war", "invasion", "ceasefire",
-    "sanction", "tariff", "fed", "powell", "interest rate", "recession", "oil",
-    "opec", "nuclear", "missile", "korea", "kim", "venezuela", "maduro", "zelenskyy",
+    "russia",
+    "ukraine",
+    "china",
+    "taiwan",
+    "iran",
+    "israel",
+    "gaza",
+    "hamas",
+    "hezbollah",
+    "putin",
+    "zelensky",
+    "xi jinping",
+    "netanyahu",
+    "biden",
+    "trump",
+    "election",
+    "president",
+    "congress",
+    "senate",
+    "nato",
+    "war",
+    "invasion",
+    "ceasefire",
+    "sanction",
+    "tariff",
+    "fed",
+    "powell",
+    "interest rate",
+    "recession",
+    "oil",
+    "opec",
+    "nuclear",
+    "missile",
+    "korea",
+    "kim",
+    "venezuela",
+    "maduro",
+    "zelenskyy",
 )
 
 CATEGORY_HINTS = (
-    "geopolitics", "politics", "world", "elections", "conflicts", "policy", "economy",
+    "geopolitics",
+    "politics",
+    "world",
+    "elections",
+    "conflicts",
+    "policy",
+    "economy",
 )
 
 DEFAULT_LIQ_MIN = Decimal("1000")
@@ -41,8 +81,10 @@ def passes_liquidity_gate(
     if liq is None and vol is None:
         return False
     try:
-        if liq is not None and Decimal(str(liq)) < min_liq and (
-            vol is None or Decimal(str(vol)) < min_vol * 4
+        if (
+            liq is not None
+            and Decimal(str(liq)) < min_liq
+            and (vol is None or Decimal(str(vol)) < min_vol * 4)
         ):
             return False
     except Exception:
@@ -50,9 +92,7 @@ def passes_liquidity_gate(
     return True
 
 
-def select_curated_markets(
-    markets: list[dict], basket_name: str, limit: int = 25
-) -> list[dict]:
+def select_curated_markets(markets: list[dict], basket_name: str, limit: int = 25) -> list[dict]:
     candidates = [m for m in markets if is_geopolitical(m) and passes_liquidity_gate(m)]
     candidates.sort(
         key=lambda m: (
@@ -76,6 +116,7 @@ def build_basket(curated: list[dict]) -> None:
     """Persist the basket selection to data/curated_markets.json for visibility."""
     BASKET_FILE.parent.mkdir(parents=True, exist_ok=True)
     import json
+
     payload = {
         "basket_name": "geopolitical",
         "n_markets": len(curated),

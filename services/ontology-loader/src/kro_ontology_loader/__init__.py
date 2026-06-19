@@ -1,7 +1,9 @@
 """Ontology loader — pushes PG state into Neo4j as a typed graph."""
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import signal
 from datetime import datetime, timezone
@@ -59,8 +61,12 @@ def _row_to_wallet(r) -> dict:
         "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
         "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
         "polymarket_pnl": float(r["polymarket_pnl"]) if r["polymarket_pnl"] is not None else None,
-        "polymarket_volume": float(r["polymarket_volume"]) if r["polymarket_volume"] is not None else None,
-        "smart_money_score": float(r["smart_money_score"]) if r["smart_money_score"] is not None else None,
+        "polymarket_volume": float(r["polymarket_volume"])
+        if r["polymarket_volume"] is not None
+        else None,
+        "smart_money_score": float(r["smart_money_score"])
+        if r["smart_money_score"] is not None
+        else None,
         "cluster_id": r["cluster_id"],
         "entity_id": r["entity_id"],
         "risk_flags": r["risk_flags"] or [],
@@ -316,13 +322,15 @@ async def upsert_alerts(session: AsyncSession, alerts: list[dict]) -> int:
         return 0
     serialized = []
     for a in alerts:
-        serialized.append({
-            **a,
-            "market_signal": json.dumps(a.get("market_signal") or {}),
-            "flow_signal": json.dumps(a.get("flow_signal") or {}),
-            "entity_risk": json.dumps(a.get("entity_risk") or {}),
-            "lead_lag": json.dumps(a.get("lead_lag") or {}),
-        })
+        serialized.append(
+            {
+                **a,
+                "market_signal": json.dumps(a.get("market_signal") or {}),
+                "flow_signal": json.dumps(a.get("flow_signal") or {}),
+                "entity_risk": json.dumps(a.get("entity_risk") or {}),
+                "lead_lag": json.dumps(a.get("lead_lag") or {}),
+            }
+        )
     cypher = """
     UNWIND $alerts AS a
     MERGE (alert:KineticRiskAlert {id: a.id})
@@ -428,12 +436,13 @@ async def main() -> None:
     log.info("schema_applied")
 
     stop = asyncio.Event()
-    def _sig(*_): stop.set()
+
+    def _sig(*_):
+        stop.set()
+
     for s in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             asyncio.get_running_loop().add_signal_handler(s, _sig)
-        except NotImplementedError:
-            pass
 
     refresh_seconds = int(getattr(settings, "ontology_refresh_seconds", 300))
     first_run = True
@@ -450,10 +459,8 @@ async def main() -> None:
             first_run = False
         except Exception as e:
             log.error("ontology_load_error", err=str(e))
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=refresh_seconds)
-        except asyncio.TimeoutError:
-            pass
     await driver.close()
     await pg.close()
 

@@ -1,4 +1,5 @@
 """KRO structured logging — JSON in prod, pretty in dev."""
+
 from __future__ import annotations
 
 import logging

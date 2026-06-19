@@ -1,8 +1,10 @@
 """KRO Postgres connection pool + writers."""
+
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 import asyncpg
 import orjson
@@ -175,9 +177,7 @@ async def insert_market_fills(conn: asyncpg.Connection, fills: list[dict[str, An
     return count
 
 
-async def insert_chain_transfers(
-    conn: asyncpg.Connection, transfers: list[dict[str, Any]]
-) -> int:
+async def insert_chain_transfers(conn: asyncpg.Connection, transfers: list[dict[str, Any]]) -> int:
     if not transfers:
         return 0
     sql = """

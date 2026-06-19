@@ -1,10 +1,11 @@
 """KRO Redpanda/Kafka bus producer + consumer."""
+
 from __future__ import annotations
 
-import asyncio
-import orjson
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
+import orjson
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 
@@ -42,19 +43,13 @@ class BusProducer:
 
     async def send(self, topic: str, value: dict[str, Any], key: str | None = None) -> None:
         assert self._producer is not None, "BusProducer not started"
-        await self._producer.send_and_wait(
-            topic, value=value, key=key.encode() if key else None
-        )
+        await self._producer.send_and_wait(topic, value=value, key=key.encode() if key else None)
 
-    async def send_batch(
-        self, topic: str, values: list[dict[str, Any]], key_fn=None
-    ) -> None:
+    async def send_batch(self, topic: str, values: list[dict[str, Any]], key_fn=None) -> None:
         assert self._producer is not None, "BusProducer not started"
         for v in values:
             key = key_fn(v) if key_fn else None
-            await self._producer.send_and_wait(
-                topic, value=v, key=key.encode() if key else None
-            )
+            await self._producer.send_and_wait(topic, value=v, key=key.encode() if key else None)
 
 
 class BusConsumer:

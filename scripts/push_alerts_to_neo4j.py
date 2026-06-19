@@ -1,8 +1,7 @@
 """One-shot: push kinetic_alerts to Neo4j (bypasses the slow loader)."""
+
 import asyncio
 import json
-import os
-import sys
 
 from kro_common import PgPool, get_settings
 from neo4j import AsyncGraphDatabase

@@ -8,9 +8,11 @@ Pipeline:
 
 We report pairwise F1 on a held-out labeled set.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import io
 import json
@@ -40,26 +42,34 @@ async def fetch_ofac_sdn() -> list[dict]:
     out: list[dict] = []
     for row in sdn:
         for chain, addr in _extract_crypto_addresses(row.get("remarks", "")):
-            out.append({
-                "uid": f"ofac-sdn-{row.get('ent_num', '')}",
-                "name": row.get("name", ""),
-                "address": addr,
-                "chain": chain,
-                "country": row.get("program", ""),
-                "type": "individual" if row.get("sdn_type", "") == "Individual" else "organization",
-                "source": "ofac_sdn",
-            })
+            out.append(
+                {
+                    "uid": f"ofac-sdn-{row.get('ent_num', '')}",
+                    "name": row.get("name", ""),
+                    "address": addr,
+                    "chain": chain,
+                    "country": row.get("program", ""),
+                    "type": "individual"
+                    if row.get("sdn_type", "") == "Individual"
+                    else "organization",
+                    "source": "ofac_sdn",
+                }
+            )
     for row in add:
         for chain, addr in _extract_crypto_addresses(row.get("remarks", "")):
-            out.append({
-                "uid": f"ofac-add-{row.get('ent_num', '')}",
-                "name": row.get("name", ""),
-                "address": addr,
-                "chain": chain,
-                "country": row.get("program", ""),
-                "type": "individual" if row.get("sdn_type", "") == "Individual" else "organization",
-                "source": "ofac_add",
-            })
+            out.append(
+                {
+                    "uid": f"ofac-add-{row.get('ent_num', '')}",
+                    "name": row.get("name", ""),
+                    "address": addr,
+                    "chain": chain,
+                    "country": row.get("program", ""),
+                    "type": "individual"
+                    if row.get("sdn_type", "") == "Individual"
+                    else "organization",
+                    "source": "ofac_add",
+                }
+            )
     log.info("ofac_loaded", sdn_count=len(out))
     return out
 
@@ -79,20 +89,22 @@ async def _fetch_csv(url: str) -> list[dict]:
                 continue
             while len(parts) < 12:
                 parts.append("")
-            rows.append({
-                "ent_num": parts[0],
-                "name": parts[1].strip('"'),
-                "sdn_type": parts[2].strip('"'),
-                "program": parts[3].strip('"'),
-                "title": parts[4].strip('"'),
-                "call_sign": parts[5].strip('"'),
-                "vess_type": parts[6].strip('"'),
-                "tonnage": parts[7].strip('"'),
-                "grt": parts[8].strip('"'),
-                "vess_flag": parts[9].strip('"'),
-                "vess_owner": parts[10].strip('"'),
-                "remarks": parts[11],
-            })
+            rows.append(
+                {
+                    "ent_num": parts[0],
+                    "name": parts[1].strip('"'),
+                    "sdn_type": parts[2].strip('"'),
+                    "program": parts[3].strip('"'),
+                    "title": parts[4].strip('"'),
+                    "call_sign": parts[5].strip('"'),
+                    "vess_type": parts[6].strip('"'),
+                    "tonnage": parts[7].strip('"'),
+                    "grt": parts[8].strip('"'),
+                    "vess_flag": parts[9].strip('"'),
+                    "vess_owner": parts[10].strip('"'),
+                    "remarks": parts[11],
+                }
+            )
         return rows
     except Exception as e:
         log.warning("ofac_fetch_failed", url=url, err=str(e))
@@ -100,8 +112,11 @@ async def _fetch_csv(url: str) -> list[dict]:
 
 
 _CRYPTO_ADDR_RE = None
+
+
 def _crypto_addr_re():
     import re
+
     global _CRYPTO_ADDR_RE
     if _CRYPTO_ADDR_RE is None:
         _CRYPTO_ADDR_RE = re.compile(
@@ -146,7 +161,9 @@ async def upsert_ofac(pool: PgPool, sdn_entries: list[dict]) -> int:
     async with pool.acquire() as conn:
         async with conn.transaction():
             for r in rows:
-                await conn.execute(sql, r["uid"], r["name"], r["crypto_addresses"], r["country"], r["source"])
+                await conn.execute(
+                    sql, r["uid"], r["name"], r["crypto_addresses"], r["country"], r["source"]
+                )
     return len(rows)
 
 
@@ -160,14 +177,16 @@ async def upsert_entities_from_ofac(pool: PgPool, sdn_entries: list[dict]) -> in
         if entity_id in seen:
             continue
         seen.add(entity_id)
-        rows.append({
-            "entity_id": entity_id,
-            "name": e["name"],
-            "type": "sanctioned",
-            "labels": ["sanctioned", e.get("chain", ""), "ofac"],
-            "risk_level": "critical",
-            "source": e.get("source", "ofac"),
-        })
+        rows.append(
+            {
+                "entity_id": entity_id,
+                "name": e["name"],
+                "type": "sanctioned",
+                "labels": ["sanctioned", e.get("chain", ""), "ofac"],
+                "risk_level": "critical",
+                "source": e.get("source", "ofac"),
+            }
+        )
     sql = """
     INSERT INTO entities (entity_id, name, type, labels, risk_level, source)
     VALUES ($1, $2, $3, $4, $5, $6)
@@ -179,7 +198,15 @@ async def upsert_entities_from_ofac(pool: PgPool, sdn_entries: list[dict]) -> in
     async with pool.acquire() as conn:
         async with conn.transaction():
             for r in rows:
-                await conn.execute(sql, r["entity_id"], r["name"], r["type"], r["labels"], r["risk_level"], r["source"])
+                await conn.execute(
+                    sql,
+                    r["entity_id"],
+                    r["name"],
+                    r["type"],
+                    r["labels"],
+                    r["risk_level"],
+                    r["source"],
+                )
     return len(rows)
 
 
@@ -258,7 +285,7 @@ def leiden_cluster(
             parent[rx] = ry
 
     by_w = {w: counterparties.get(w, set()) for w in wallets}
-    wallet_index = {w: i for i, w in enumerate(wallets)}
+    {w: i for i, w in enumerate(wallets)}
     edges_added = 0
     for i, a in enumerate(wallets):
         ca = by_w[a]
@@ -294,13 +321,15 @@ async def persist_clusters(
             continue
         cid = f"cl_{i:06d}"
         cluster_id_to_members[cid] = members
-        rows.append({
-            "cluster_id": cid,
-            "size": len(members),
-            "method": f"jaccard_leiden_{jaccard_threshold}",
-            "confidence": min(0.99, 0.5 + jaccard_threshold),
-            "canonical_address": members[0],
-        })
+        rows.append(
+            {
+                "cluster_id": cid,
+                "size": len(members),
+                "method": f"jaccard_leiden_{jaccard_threshold}",
+                "confidence": min(0.99, 0.5 + jaccard_threshold),
+                "canonical_address": members[0],
+            }
+        )
     if not rows:
         return 0
     cluster_sql = """
@@ -319,10 +348,17 @@ async def persist_clusters(
         async with conn.transaction():
             for r in rows:
                 await conn.execute(
-                    cluster_sql, r["cluster_id"], r["size"], r["method"], r["confidence"], r["canonical_address"]
+                    cluster_sql,
+                    r["cluster_id"],
+                    r["size"],
+                    r["method"],
+                    r["confidence"],
+                    r["canonical_address"],
                 )
             for r in rows:
-                await conn.execute(wallet_sql, r["cluster_id"], cluster_id_to_members[r["cluster_id"]])
+                await conn.execute(
+                    wallet_sql, r["cluster_id"], cluster_id_to_members[r["cluster_id"]]
+                )
     return len(rows)
 
 
@@ -362,6 +398,7 @@ async def build_gold_set(pool: PgPool) -> list[tuple[str, str, bool]]:
     same_set = seen_pairs
     n_neg = min(len(pairs) * 2, 200)
     import random
+
     rng = random.Random(42)
     while len([p for p in pairs if not p[2]]) < n_neg:
         i, j = rng.sample(range(n_wallets), 2)
@@ -471,12 +508,13 @@ async def main() -> None:
     await pool.connect()
 
     stop = asyncio.Event()
-    def _sig(*_): stop.set()
+
+    def _sig(*_):
+        stop.set()
+
     for s in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             asyncio.get_running_loop().add_signal_handler(s, _sig)
-        except NotImplementedError:
-            pass
 
     try:
         while not stop.is_set():
@@ -484,10 +522,8 @@ async def main() -> None:
                 await run_pipeline(pool)
             except Exception as e:
                 log.error("er_pipeline_error", err=str(e))
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=REFRESH_INTERVAL)
-            except asyncio.TimeoutError:
-                pass
     finally:
         await pool.close()
 

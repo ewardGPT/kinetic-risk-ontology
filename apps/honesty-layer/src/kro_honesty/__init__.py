@@ -1,7 +1,9 @@
 """Phase 5 honesty layer — wash-trade suppression and smart-money weighting."""
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -87,12 +89,13 @@ async def main() -> None:
     await pool.connect()
 
     stop = asyncio.Event()
-    def _sig(*_): stop.set()
+
+    def _sig(*_):
+        stop.set()
+
     for s in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             asyncio.get_running_loop().add_signal_handler(s, _sig)
-        except NotImplementedError:
-            pass
 
     try:
         while not stop.is_set():
@@ -102,10 +105,8 @@ async def main() -> None:
                 await thin_market_gates(pool)
             except Exception as e:
                 log.error("honesty_layer_error", err=str(e))
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=300)
-            except asyncio.TimeoutError:
-                pass
     finally:
         await pool.close()
 

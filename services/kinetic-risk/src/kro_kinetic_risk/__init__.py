@@ -5,22 +5,24 @@ Maintains in-memory rolling windows for per-market probability and per-cluster
 stablecoin flow. When both fire a z-score breach within a short window, runs
 a lead-lag cross-correlation and emits a KineticRiskAlert.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 import structlog
 from aiokafka import AIOKafkaConsumer
 from kro_common import (
+    TOPICS,
     BusConsumer,
     PgPool,
-    TOPICS,
     get_settings,
     insert_alert,
     setup_logging,
@@ -40,7 +42,9 @@ MAX_CLUSTERS_IN_WINDOW = 5000
 
 
 class RollingSeries:
-    def __init__(self, window_seconds: int = WINDOW_SECONDS, bucket_seconds: int = BUCKET_SECONDS) -> None:
+    def __init__(
+        self, window_seconds: int = WINDOW_SECONDS, bucket_seconds: int = BUCKET_SECONDS
+    ) -> None:
         self.window = window_seconds
         self.bucket = bucket_seconds
         self._points: dict[str, deque[tuple[float, float]]] = defaultdict(deque)
@@ -92,21 +96,25 @@ class RollingSeries:
         n = len(values)
         mean = sum(values) / n
         var = sum((v - mean) ** 2 for v in values) / max(n - 1, 1)
-        std = var ** 0.5
+        std = var**0.5
         if std < 1e-9:
             return None
         return (current - mean) / std
 
 
-def lead_lag_confidence(a: list[float], b: list[float], max_lag: int = LEAD_LAG_BUCKETS) -> tuple[float, int]:
+def lead_lag_confidence(
+    a: list[float], b: list[float], max_lag: int = LEAD_LAG_BUCKETS
+) -> tuple[float, int]:
     """Windowed cross-correlation. Returns (best_score, lag_buckets) where lag>0 means b leads a."""
     if len(a) < 6 or len(b) < 6 or len(a) != len(b):
         return 0.0, 0
     n = len(a)
     mean_a = sum(a) / n
     mean_b = sum(b) / n
-    var_a = sum((x - mean_a) ** 2 for x in a) or 1e-9
-    var_b = sum((x - mean_b) ** 2 for x in b) or 1e-9
+    var_a = sum((x - mean_a) ** 2 for x in a) / n
+    var_b = sum((x - mean_b) ** 2 for x in b) / n
+    std_a = var_a**0.5 or 1e-9
+    std_b = var_b**0.5 or 1e-9
     best = 0.0
     best_lag = 0
     for lag in range(-max_lag, max_lag + 1):
@@ -120,7 +128,7 @@ def lead_lag_confidence(a: list[float], b: list[float], max_lag: int = LEAD_LAG_
             continue
         m = len(x)
         cov = sum((x[i] - mean_a) * (y[i] - mean_b) for i in range(m)) / m
-        corr = cov / (var_a * var_b) ** 0.5
+        corr = cov / (std_a * std_b)
         if abs(corr) > abs(best):
             best = corr
             best_lag = lag
@@ -191,10 +199,8 @@ class KineticEngine:
         self.market_prob.add(market_id, p, ts=ts_f)
         size = msg.get("size")
         if size is not None:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 self.market_volume.add(market_id, float(size), ts=ts_f)
-            except (TypeError, ValueError):
-                pass
 
     def handle_chain_transfer(self, msg: dict) -> None:
         ts_str = msg.get("time")
@@ -281,9 +287,11 @@ class KineticEngine:
                     "cross_corr": corr,
                     "lag_buckets": lag,
                     "interpretation": (
-                        "on-chain flow leads market" if lag > 0 else
-                        "market leads on-chain flow" if lag < 0 else
-                        "coincident"
+                        "on-chain flow leads market"
+                        if lag > 0
+                        else "market leads on-chain flow"
+                        if lag < 0
+                        else "coincident"
                     ),
                 }
                 entity_w = entity_risk.get("weight", 1.0)
@@ -294,7 +302,7 @@ class KineticEngine:
                 if composite < 0.05:
                     continue
                 alert = {
-                    "time": datetime.now(tz=timezone.utc),
+                    "time": datetime.now(tz=UTC),
                     "market_id": market,
                     "cluster_id": cluster,
                     "entity_id": entity_risk.get("entity_id"),
@@ -363,12 +371,13 @@ async def run_engine() -> None:
     await consumer.start()
 
     stop = asyncio.Event()
-    def _sig(*_): stop.set()
+
+    def _sig(*_):
+        stop.set()
+
     for s in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             asyncio.get_running_loop().add_signal_handler(s, _sig)
-        except NotImplementedError:
-            pass
 
     last_traders_refresh = 0.0
     last_evaluate = 0.0
@@ -393,10 +402,8 @@ async def run_engine() -> None:
                     n_alerts_emitted += 1
             except Exception as e:
                 log.error("evaluate_error", err=str(e))
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=30)
-            except asyncio.TimeoutError:
-                pass
             last_evaluate = time.time()
 
     async def refresh_loop() -> None:
@@ -408,10 +415,8 @@ async def run_engine() -> None:
                 except Exception as e:
                     log.error("refresh_traders_error", err=str(e))
                 last_traders_refresh = time.time()
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=60)
-            except asyncio.TimeoutError:
-                pass
 
     eval_task = asyncio.create_task(eval_loop())
     refresh_task = asyncio.create_task(refresh_loop())

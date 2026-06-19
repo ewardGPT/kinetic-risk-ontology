@@ -1,20 +1,22 @@
 """On-chain chain collector — decodes USDC.e/USDT Transfer events from Polygon."""
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 import httpx
 import structlog
 from kro_common import (
+    TOPICS,
     BusProducer,
     PgPool,
-    TOPICS,
     get_settings,
     insert_chain_transfers,
     setup_logging,
@@ -47,7 +49,9 @@ def _hex_topic_to_addr(topic: str) -> str:
     return "0x" + topic[-40:].lower()
 
 
-def _parse_log(log_entry: dict, token_meta: dict, block_ts_lookup: dict[int, datetime]) -> dict | None:
+def _parse_log(
+    log_entry: dict, token_meta: dict, block_ts_lookup: dict[int, datetime]
+) -> dict | None:
     try:
         address = (log_entry.get("address") or "").lower()
         topics = log_entry.get("topics") or []
@@ -56,13 +60,19 @@ def _parse_log(log_entry: dict, token_meta: dict, block_ts_lookup: dict[int, dat
             return None
         from_addr = _hex_topic_to_addr(topics[1]).lower()
         to_addr = _hex_topic_to_addr(topics[2]).lower()
-        amount_raw = int(data, 16) if isinstance(data, str) and data.startswith("0x") else int(data or 0)
+        amount_raw = (
+            int(data, 16) if isinstance(data, str) and data.startswith("0x") else int(data or 0)
+        )
         decimals = token_meta["decimals"]
         amount_human = Decimal(amount_raw) / (Decimal(10) ** decimals)
         block_number = _hex_to_int(log_entry.get("blockNumber", "0x0"))
         tx_hash = (log_entry.get("transactionHash") or "").lower()
-        log_index = int(log_entry.get("logIndex", "0x0"), 16) if isinstance(log_entry.get("logIndex"), str) else int(log_entry.get("logIndex") or 0)
-        ts = block_ts_lookup.get(block_number) or datetime.now(tz=timezone.utc)
+        log_index = (
+            int(log_entry.get("logIndex", "0x0"), 16)
+            if isinstance(log_entry.get("logIndex"), str)
+            else int(log_entry.get("logIndex") or 0)
+        )
+        ts = block_ts_lookup.get(block_number) or datetime.now(tz=UTC)
         return {
             "time": ts,
             "chain": "polygon",
@@ -95,7 +105,7 @@ async def rpc_call(client: httpx.AsyncClient, rpc_url: str, method: str, params:
             if "error" in payload:
                 raise RuntimeError(f"rpc error: {payload['error']}")
             return payload.get("result")
-        except Exception as e:
+        except Exception:
             if attempt == 2:
                 raise
             await asyncio.sleep(0.5 * (attempt + 1))
@@ -109,12 +119,14 @@ async def fetch_logs_in_range(
         client,
         rpc_url,
         "eth_getLogs",
-        [{
-            "fromBlock": hex(from_block),
-            "toBlock": hex(to_block),
-            "address": addr_filter,
-            "topics": [TRANSFER_TOPIC],
-        }],
+        [
+            {
+                "fromBlock": hex(from_block),
+                "toBlock": hex(to_block),
+                "address": addr_filter,
+                "topics": [TRANSFER_TOPIC],
+            }
+        ],
     )
 
 
@@ -123,26 +135,24 @@ async def fetch_block_timestamp(
 ) -> datetime:
     block = await rpc_call(client, rpc_url, "eth_getBlockByNumber", [hex(block_number), False])
     ts_hex = (block or {}).get("timestamp", "0x0")
-    return datetime.fromtimestamp(_hex_to_int(ts_hex), tz=timezone.utc)
+    return datetime.fromtimestamp(_hex_to_int(ts_hex), tz=UTC)
 
 
-async def backfill_wallet(
-    conn, address: str, first_block: int | None = None
-) -> None:
+async def backfill_wallet(conn, address: str, first_block: int | None = None) -> None:
     await upsert_wallets(
         conn,
-        [{
-            "address": address.lower(),
-            "chain": "polygon",
-            "first_seen": datetime.now(tz=timezone.utc) if first_block is None else None,
-            "last_seen": datetime.now(tz=timezone.utc),
-        }],
+        [
+            {
+                "address": address.lower(),
+                "chain": "polygon",
+                "first_seen": datetime.now(tz=UTC) if first_block is None else None,
+                "last_seen": datetime.now(tz=UTC),
+            }
+        ],
     )
 
 
-async def chain_loop(
-    pool: PgPool, bus: BusProducer, rpc_url: str, tokens: list[dict]
-) -> None:
+async def chain_loop(pool: PgPool, bus: BusProducer, rpc_url: str, tokens: list[dict]) -> None:
     state_file = "/var/tmp/kro_chain_state.json"
     last_block = None
     if os.path.exists(state_file):
@@ -163,14 +173,16 @@ async def chain_loop(
                     chunk_end = min(cursor + MAX_BLOCK_RANGE - 1, head - SAFE_REORG_DEPTH)
                     raw_logs = await fetch_logs_in_range(client, rpc_url, cursor, chunk_end, tokens)
                     if raw_logs:
-                        blocks = sorted({_hex_to_int(e.get("blockNumber", "0x0")) for e in raw_logs})
+                        blocks = sorted(
+                            {_hex_to_int(e.get("blockNumber", "0x0")) for e in raw_logs}
+                        )
                         ts_lookup: dict[int, datetime] = {}
                         for b in blocks:
                             try:
                                 ts_lookup[b] = await fetch_block_timestamp(client, rpc_url, b)
                             except Exception as e:
                                 log.warning("block_ts_failed", block=b, err=str(e))
-                                ts_lookup[b] = datetime.now(tz=timezone.utc)
+                                ts_lookup[b] = datetime.now(tz=UTC)
                         transfers: list[dict] = []
                         for entry in raw_logs:
                             token_addr = (entry.get("address") or "").lower()
@@ -187,11 +199,13 @@ async def chain_loop(
                                 await insert_chain_transfers(conn, transfers)
                             for t in transfers:
                                 await bus.send(TOPICS["chain_transfers"], t, key=t["to_address"])
-                            seen = {t["from_address"] for t in transfers} | {t["to_address"] for t in transfers}
+                            seen = {t["from_address"] for t in transfers} | {
+                                t["to_address"] for t in transfers
+                            }
                             seen.discard("0x0000000000000000000000000000000000000000")
                             seen.discard("0x000000000000000000000000000000000000dead")
                             if seen:
-                                now = datetime.now(tz=timezone.utc)
+                                now = datetime.now(tz=UTC)
                                 async with pool.acquire() as conn:
                                     await upsert_wallets(
                                         conn,
@@ -208,10 +222,8 @@ async def chain_loop(
                             )
                     cursor = chunk_end + 1
                     last_block = chunk_end
-                    try:
+                    with contextlib.suppress(Exception):
                         open(state_file, "w").write(json.dumps({"last_block": last_block}))
-                    except Exception:
-                        pass
             except Exception as e:
                 log.error("chain_loop_error", err=str(e))
             await asyncio.sleep(POLL_INTERVAL)
@@ -228,11 +240,13 @@ async def main() -> None:
     if extra:
         try:
             for t in json.loads(extra):
-                tokens.append({
-                    "address": t["address"],
-                    "symbol": t.get("symbol", "?"),
-                    "decimals": int(t.get("decimals", 6)),
-                })
+                tokens.append(
+                    {
+                        "address": t["address"],
+                        "symbol": t.get("symbol", "?"),
+                        "decimals": int(t.get("decimals", 6)),
+                    }
+                )
         except Exception as e:
             log.warning("extra_tokens_parse_failed", err=str(e))
 
@@ -243,12 +257,13 @@ async def main() -> None:
     log.info("starting_chain_collector", tokens=len(t), rpc=settings.polygon_rpc_https)
 
     stop = asyncio.Event()
-    def _sig(*_): stop.set()
+
+    def _sig(*_):
+        stop.set()
+
     for s in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             asyncio.get_running_loop().add_signal_handler(s, _sig)
-        except NotImplementedError:
-            pass
 
     task = asyncio.create_task(chain_loop(pool, bus, settings.polygon_rpc_https, tokens))
     try:

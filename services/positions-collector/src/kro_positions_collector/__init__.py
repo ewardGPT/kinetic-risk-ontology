@@ -1,19 +1,21 @@
 """Positions collector — Polymarket Data API public trades feed + positions/value per wallet."""
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 import httpx
 import structlog
 from kro_common import (
+    TOPICS,
     BusProducer,
     PgPool,
-    TOPICS,
     get_settings,
     insert_market_fills,
     setup_logging,
@@ -40,7 +42,7 @@ async def fetch_json(
         try:
             r = await client.get(url, params=params or {}, timeout=REQUEST_TIMEOUT)
             if r.status_code == 429:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
                 continue
             r.raise_for_status()
             return r.json()
@@ -63,22 +65,22 @@ def _to_decimal(v: Any) -> Decimal | None:
 def _ts_to_dt(v: Any) -> datetime:
     if isinstance(v, (int, float)):
         if v > 1e12:
-            return datetime.fromtimestamp(v / 1000, tz=timezone.utc)
-        return datetime.fromtimestamp(v, tz=timezone.utc)
+            return datetime.fromtimestamp(v / 1000, tz=UTC)
+        return datetime.fromtimestamp(v, tz=UTC)
     if isinstance(v, str):
         try:
             if v.isdigit():
                 i = int(v)
                 if i > 1e12:
-                    return datetime.fromtimestamp(i / 1000, tz=timezone.utc)
-                return datetime.fromtimestamp(i, tz=timezone.utc)
+                    return datetime.fromtimestamp(i / 1000, tz=UTC)
+                return datetime.fromtimestamp(i, tz=UTC)
         except Exception:
             pass
         try:
             return datetime.fromisoformat(v.replace("Z", "+00:00"))
         except Exception:
             pass
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def trade_to_fill(trade: dict) -> dict | None:
@@ -133,7 +135,7 @@ def value_to_features(value_data: Any, wallet: str) -> dict:
         "polymarket_pnl": _to_decimal(entry.get("value")),
         "polymarket_volume": None,
         "smart_money_score": None,
-        "last_seen": datetime.now(tz=timezone.utc),
+        "last_seen": datetime.now(tz=UTC),
     }
 
 
@@ -145,7 +147,7 @@ async def ingest_trade_feed(pool: PgPool, bus: BusProducer, seen_hashes: set[str
             return 0
         fills: list[dict] = []
         wallets_seen: dict[str, datetime] = {}
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         for t in data:
             if not isinstance(t, dict):
                 continue
@@ -170,17 +172,12 @@ async def ingest_trade_feed(pool: PgPool, bus: BusProducer, seen_hashes: set[str
             async with pool.acquire() as conn:
                 await upsert_wallets(
                     conn,
-                    [
-                        {"address": a, "last_seen": now, "chain": "polygon"}
-                        for a in wallets_seen
-                    ],
+                    [{"address": a, "last_seen": now, "chain": "polygon"} for a in wallets_seen],
                 )
         return len(fills)
 
 
-async def refresh_smart_wallets(
-    pool: PgPool, bus: BusProducer, top_wallets: list[str]
-) -> int:
+async def refresh_smart_wallets(pool: PgPool, bus: BusProducer, top_wallets: list[str]) -> int:
     """For each top wallet, pull value (PnL) and positions."""
     if not top_wallets:
         return 0
@@ -199,9 +196,7 @@ async def refresh_smart_wallets(
             try:
                 positions = await fetch_json(client, POSITIONS_URL, {"user": wallet})
                 if isinstance(positions, list) and positions:
-                    sizes = [
-                        _to_decimal(p.get("size")) or Decimal(0) for p in positions
-                    ]
+                    sizes = [_to_decimal(p.get("size")) or Decimal(0) for p in positions]
                     total_size = sum(sizes, Decimal(0))
                     async with pool.acquire() as conn:
                         await upsert_wallets(
@@ -213,7 +208,7 @@ async def refresh_smart_wallets(
                                     "smart_money_score": min(1.0, float(total_size) / 1000.0)
                                     if total_size
                                     else None,
-                                    "last_seen": datetime.now(tz=timezone.utc),
+                                    "last_seen": datetime.now(tz=UTC),
                                 }
                             ],
                         )
@@ -250,12 +245,13 @@ async def main() -> None:
     log.info("starting_positions_collector", data=settings.polymarket_data_url)
 
     stop = asyncio.Event()
-    def _sig(*_): stop.set()
+
+    def _sig(*_):
+        stop.set()
+
     for s in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             asyncio.get_running_loop().add_signal_handler(s, _sig)
-        except NotImplementedError:
-            pass
 
     seen_hashes: set[str] = set()
     last_positions_refresh = 0.0
@@ -276,10 +272,8 @@ async def main() -> None:
                     log.info("smart_wallets_refreshed", wallets=len(top), n_done=n_done)
                 except Exception as e:
                     log.error("smart_wallets_error", err=str(e))
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=TRADE_FEED_INTERVAL)
-            except asyncio.TimeoutError:
-                pass
     finally:
         await bus.stop()
         await pool.close()

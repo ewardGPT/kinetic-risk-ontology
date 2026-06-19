@@ -1,9 +1,14 @@
 # Kinetic Risk Ontology (KRO)
 
+[![CI](https://github.com/ewardGPT/kinetic-risk-ontology/actions/workflows/ci.yml/badge.svg)](https://github.com/ewardGPT/kinetic-risk-ontology/actions/workflows/ci.yml)
+
 > A streaming intelligence platform that fuses prediction-market conviction with
 > on-chain financial behavior at the *wallet level*, surfacing early warnings
 > when geopolitical probability spikes coincide with anomalous stablecoin
 > movement from high-risk entity clusters.
+
+**Live demo:** <http://100.114.62.36:3300/d/kro-main> (Grafana) ·
+<http://100.114.62.36:7474> (Neo4j Browser, `neo4j` / `kro_local_2026`)
 
 ## The thesis (30 seconds)
 
@@ -96,8 +101,8 @@ ssh vps 'cd ~/projects/palentir && docker compose up -d --build'
 ./scripts/seed_demo_alert.sh
 
 # 4. Open the surfaces
-# Grafana:   http://<vps-ip>:3300/d/kro-main
-# Neo4j:     http://<vps-ip>:7474
+# Grafana:   http://100.114.62.36:3300/d/kro-main
+# Neo4j:     http://100.114.62.36:7474  (neo4j / kro_local_2026)
 # psql:      docker exec -it palentir-timescaledb psql -U postgres -d kro
 ```
 
